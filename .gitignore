@@ -24,3 +24,8 @@ Desktop.ini
 *.token
 secrets.*
 credentials.*
+build/
+dist/
+.installer.lock
+*.pdb
+*.dmp

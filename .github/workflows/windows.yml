@@ -1,0 +1,70 @@
+name: Windows verification and release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Windows PowerShell 5.1 tests
+        shell: powershell
+        run: |
+          .\Test-InstallLocalMods.ps1
+          .\Test-Functional.ps1
+      - name: PowerShell 7 tests
+        shell: pwsh
+        run: |
+          .\Test-InstallLocalMods.ps1
+          .\Test-Functional.ps1
+      - name: Package from allowlist
+        shell: powershell
+        run: |
+          .\package.ps1
+          if ($env:GITHUB_REF -like 'refs/tags/*' -and $env:GITHUB_REF_NAME -ne ('v' + (Get-Content VERSION -Raw).Trim())) { throw 'Tag and VERSION do not match.' }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: DeadCellsLocalModInstaller-${{ matrix.os }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: windows-2025
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify and package
+        shell: powershell
+        run: |
+          .\Test-InstallLocalMods.ps1
+          .\Test-Functional.ps1
+          .\package.ps1
+      - name: Publish portable ZIP
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $assets = @(Get-ChildItem dist\* | ForEach-Object FullName)
+          gh release create $env:GITHUB_REF_NAME @assets --verify-tag --title "Dead Cells Local Mod Installer $env:GITHUB_REF_NAME" --generate-notes
+          if ($LASTEXITCODE) { throw 'Release creation failed.' }

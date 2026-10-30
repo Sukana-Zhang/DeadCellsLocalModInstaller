@@ -1,63 +1,64 @@
 # Dead Cells Local Mod Installer
 
-将 Steam 创意工坊下载的《Dead Cells / 死亡细胞》Mod 重新打包为本地资源包，生成 `res1.pak`、`res2.pak`、`res3.pak` 等文件，并复制到游戏本体目录。
+[English](README.en.md) · [下载分享版](https://github.com/Sukana-Zhang/DeadCellsLocalModInstaller/releases/latest)
 
-## 功能
-
-- 自动查找 Steam 库、Dead Cells 安装目录和 Workshop Mod。
-- 从游戏本体 `res.pak` 头部提取当前 64 位打包密钥。
-- 按用户指定顺序重新打包多个 Mod。
-- 安装前自动备份已有的本地 Mod；支持卸载并恢复到无本地 Mod 状态。
-- 不修改原版 `res.pak`。
+把已经下载到本地的 Steam 创意工坊《死亡细胞》Mod，按指定顺序重打包为 `res1.pak`、`res2.pak` 等资源包，放到游戏目录中加载。原版 `res.pak` 不会被修改。
 
 ## 使用
 
-1. 确保已通过 Steam 创意工坊订阅并下载需要的 Mod。
-2. 解压本仓库，双击 `InstallLocalMods.cmd`。
-3. 选择 `1` 安装本地 Mod，或选择 `2` 卸载本地 Mod。
-4. 检测到多个 Mod 时，按提示输入安装顺序，例如 `1,3,2`。
-5. 安装完成后从 Steam 正常启动 Dead Cells；不要在游戏内再次启用同一个 Mod。
+适用于 Windows 10/11、Windows PowerShell 5.1 和 Steam 版 Dead Cells。随附 PAKTool 使用 .NET Framework；如无法启动，请检查 Windows 的 .NET Framework 4.8。当前打包方式面向带 stamp 的 v1 游戏 PAK（v35 及以后），未来游戏版本可能改变格式。
 
-也可以从 PowerShell 调用：
+1. 先在 Steam 创意工坊订阅 Mod，等待下载完成，然后关闭游戏。
+2. 从 [Releases](https://github.com/Sukana-Zhang/DeadCellsLocalModInstaller/releases/latest) 下载 ZIP，完整解压到可写的固定目录。
+3. 双击 `InstallLocalMods.cmd`。选择 `1` 安装；检测到多个游戏目录时先选目录。
+4. 按列表编号输入 Mod 顺序，例如 `1,3,2`。列表按本地文件修改时间排序，每次使用时请确认名称。
+5. 完成后从 Steam 正常启动游戏，不要在游戏内再启用同一份 Workshop Mod。
+
+第一个选中的 Mod 成为 `res1.pak`，第二个为 `res2.pak`，依此类推。后面的资源包可能覆盖前面的资源；本工具不会自动合并 Mod 冲突。它是资源重打包工具，不是自带内容的游戏 Mod。
+
+## 备份、卸载与恢复
+
+安装时先完成所有解包和重打包，再校验备份并替换游戏目录中的编号资源包。备份保存在本工具目录的 `Backups/LocalModBackup-时间-随机标识/` 中。正常捕获到的文件写入错误会触发旧文件恢复；断电、强制结束进程或磁盘故障仍可能需要手动恢复。
+
+选择 `2` 卸载：备份并移除游戏目录里所有 `res1.pak`、`res2.pak` 等编号包。**工具将所有 `resN.pak`（N ≥ 1）视为待管理文件**，包括由其他工具安装的同名包。不会修改原版 `res.pak` 或存档。
+
+如要恢复某次旧安装，关闭游戏，先将当前编号包另存，再把对应备份文件夹里的 `resN.pak` 复制回游戏目录。请保留工具的备份文件夹，并自行备份游戏存档。
+
+## 命令行
 
 ```powershell
-.\InstallLocalMods.ps1 -Action Install -Order 1,3,2
-.\InstallLocalMods.ps1 -Action Remove
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\InstallLocalMods.ps1 -Action Install -Order "1,3,2"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\InstallLocalMods.ps1 -Action Remove
 ```
 
-更完整的说明见 [`帖子分享说明.txt`](./帖子分享说明.txt)；原始简版说明保留在 [`README.txt`](./README.txt)。
+Steam 或游戏安装在自定义位置、自动查找失败时，可以指定目录（示例路径请替换）：
 
-## 目录说明
+```powershell
+.\InstallLocalMods.ps1 -Action Install -Order "1" -SteamDirectory "E:\Steam" -GameDirectory "E:\Steam\steamapps\common\Dead Cells"
+```
 
-| 路径 | 作用 |
-| --- | --- |
-| `InstallLocalMods.cmd` | 双击入口 |
-| `InstallLocalMods.ps1` | 自动查找、备份、解包、重打包和复制流程 |
-| `ResTool/PAKTool.exe` | PAK 解包/打包工具 |
-| `ResTool/Common.dll` | PAKTool 依赖 |
-| `ResTool/Newtonsoft.Json.dll` | PAKTool 依赖 |
-| `Test-InstallLocalMods.ps1` | 不修改游戏目录的本地完整性和依赖 smoke test |
+`-SteamDirectory` 指向包含 `steamapps` 的 Steam 库目录；Mod 需要位于其 `steamapps/workshop/content/588650/` 下。`-GameDirectory` 指向包含游戏原版 `res.pak` 的目录。命令行无效的预设顺序会报错退出。
 
-运行时产生的 `Backups/`、`res*.pak` 和日志不会纳入版本库。仓库不包含游戏本体、Workshop 内容或任何原版 `res.pak`。
+## 排错
 
-提交或发布前可运行以下检查：
+- 找不到 Mod：检查 Steam 下载是否完成，订阅内容内是否含 `res.pak` 或 `res1.pak`。
+- 工具闪退：完整解压所有文件，通过上面的命令行运行以查看错误；检查 .NET Framework 4.8 和目录写入权限。
+- 游戏运行中：关闭 `deadcells.exe` / `deadcells_gl.exe` 后再操作。
+- 安装中断或游戏异常：保留 `Backups/`，卸载或手动恢复之前的编号包，再逐个检查 Mod 兼容性。
+- 游戏目录不可写：优先检查目录权限。无需为日常使用永久更改系统 PowerShell 执行策略，CMD 入口只为当前进程指定策略。
+
+## 源码与验证
+
+`InstallLocalMods.ps1` 是完整自动化源码；`ResTool/` 是第三方打包工具，来源、哈希和许可见 [第三方说明](THIRD-PARTY-NOTICES.md)。仓库不包含游戏、Workshop Mod、个人存档、备份、运行日志或凭据。
 
 ```powershell
 .\Test-InstallLocalMods.ps1
+.\Test-Functional.ps1
+.\package.ps1
 ```
 
-仓库也不应提交 API key、访问令牌、密码、证书私钥或其他个人凭据；`.gitignore` 已覆盖常见凭据文件名和扩展名。
+测试只使用 `build/` 下的合成 PAK 和模拟 Steam 目录，覆盖真实打包往返、顺序校验、备份、安装、卸载及失败恢复，不会扫描或修改你的游戏目录。GitHub Actions 在 Windows Server 2022/2025 上分别运行 Windows PowerShell 5.1 和 PowerShell 7。尚未验证所有 Windows 10/11 硬件、游戏版本或 Mod 组合。
 
-## 限制与风险
+## 许可
 
-- 仅适用于 Steam 版 Dead Cells；游戏更新后 PAK 格式变化可能导致工具失效。
-- Mod 之间存在资源冲突时，后加载的包可能覆盖先加载的包。
-- 修改本地游戏资源可能导致异常、存档问题或违反游戏/Steam 规则，请自行备份并承担风险。
-
-## 依赖与致谢
-
-仓库随附的 `PAKTool.exe` 来自 Dead Cells ModTools 生态（运行时显示为 N3rdL0rd's PakTool v0.1a / based on ModTools v1.7.0），相关第三方组件的版权和许可归原作者所有。本仓库仅封装 PowerShell 自动化流程，不包含游戏资源。
-
-## License
-
-自动化脚本和文档以 MIT License 发布；随附第三方二进制文件不适用本仓库许可证，详见 [`THIRD-PARTY-NOTICES.md`](./THIRD-PARTY-NOTICES.md)。
+本项目脚本和文档使用 [MIT License](LICENSE)。PAKTool、Common.dll 和 Newtonsoft.Json 保留各自上游 MIT 许可及版权声明，详见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。Dead Cells 名称及游戏内容归其权利人所有。本项目与游戏开发商及 Valve 没有关联。

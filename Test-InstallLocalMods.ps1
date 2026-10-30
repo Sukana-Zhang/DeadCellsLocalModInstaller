@@ -16,6 +16,11 @@ foreach ($relative in $required) {
     }
 }
 
+foreach ($line in Get-Content -LiteralPath (Join-Path $root 'dependencies.sha256')) {
+    if ($line -notmatch '^([a-f0-9]{64})  (ResTool/[A-Za-z.]+)$') { throw 'Invalid dependency manifest.' }
+    if ((Get-FileHash -LiteralPath (Join-Path $root $matches[2]) -Algorithm SHA256).Hash -ne $matches[1]) { throw "Dependency checksum mismatch: $($matches[2])" }
+}
+
 $tokens = $null
 $errors = $null
 [System.Management.Automation.Language.Parser]::ParseFile(
