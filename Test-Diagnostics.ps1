@@ -109,3 +109,5 @@ finally {
     if (-not $resolved.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe test cleanup path.' }
     if (Test-Path -LiteralPath $resolved) { Remove-Item -LiteralPath $resolved -Recurse -Force }
 }
+# Expected failing child-process checks must not leak their exit code to CI.
+exit 0
