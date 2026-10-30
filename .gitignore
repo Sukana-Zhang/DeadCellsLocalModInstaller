@@ -1,0 +1,26 @@
+# Local game data and backups (never commit game resources)
+Backups/
+res*.pak
+*.pak
+
+# Generated distribution archives and temporary working data
+*.zip
+*.tmp
+*.log
+
+# Windows/editor noise
+Thumbs.db
+Desktop.ini
+.vs/
+.vscode/
+
+# Credentials and private local configuration
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.token
+secrets.*
+credentials.*
