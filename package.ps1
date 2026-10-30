@@ -2,7 +2,7 @@
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $version = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'VERSION') -Raw).Trim()
 if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid release version.' }
-$allowed = @('InstallLocalMods.cmd','InstallLocalMods.ps1','README.md','README.en.md','README.txt','LICENSE','VERSION','THIRD-PARTY-NOTICES.md','dependencies.sha256','ResTool/PAKTool.exe','ResTool/Common.dll','ResTool/Newtonsoft.Json.dll','licenses/alivecells-MIT.txt','licenses/Newtonsoft.Json-MIT.txt')
+$allowed = @('InstallLocalMods.cmd','InstallLocalMods.ps1','Diagnostics.ps1','README.md','README.en.md','README.txt','LICENSE','VERSION','THIRD-PARTY-NOTICES.md','dependencies.sha256','ResTool/PAKTool.exe','ResTool/Common.dll','ResTool/Newtonsoft.Json.dll','licenses/alivecells-MIT.txt','licenses/Newtonsoft.Json-MIT.txt')
 $stage = Join-Path $PSScriptRoot ('build\package-' + [Guid]::NewGuid().ToString('N'))
 $packageRoot = Join-Path $stage 'DeadCellsLocalModInstaller'
 $dist = Join-Path $PSScriptRoot 'dist'

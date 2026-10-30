@@ -14,7 +14,7 @@ For the Steam edition on Windows 10/11 with Windows PowerShell 5.1. The included
 4. Enter mod numbers in the desired order, for example `1,3,2`. The list is sorted by local modification time; check names before every installation.
 5. Launch the game normally through Steam. Do not enable the same mods a second time in the in-game Workshop menu.
 
-Console prompts are currently Chinese: `1` installs, `2` removes, and `安装顺序` asks for comma-separated mod numbers. The first chosen mod becomes `res1.pak`, the second `res2.pak`, and so on. Later archives may override earlier resources. Conflicting mods are not automatically merged.
+Console prompts are currently Chinese: `1` installs, `2` removes, `3` exports diagnostic logs, and `安装顺序` asks for comma-separated mod numbers. The first chosen mod becomes `res1.pak`, the second `res2.pak`, and so on. Later archives may override earlier resources. Conflicting mods are not automatically merged.
 
 ## Backups and removal
 
@@ -41,6 +41,16 @@ Override discovery for custom locations (replace these example paths):
 
 ## Troubleshooting
 
+UTF-8 structured logs are written to `%LOCALAPPDATA%\DeadCellsLocalModInstaller\Logs`, including run IDs, stages, native exit codes, backup/rollback results and exception details. `activity.log` rotates at 1 MiB and retains one `activity.previous.log`.
+
+Choose **3** to export a diagnostic TXT beside the tool. The export includes runtime versions and recent log tails (up to 512 KiB per log), without game content, mods, saves or backups. User profile paths, user SIDs and native stamp output are redacted. Review custom paths before sharing. Logs are never automatically uploaded, and export does not require a working game or PAKTool.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\InstallLocalMods.ps1 -Action ExportLogs
+```
+
+Use `-DiagnosticPath "E:\Temp\report.txt"` to choose a new export file, or `-LogDirectory "E:\Temp\LocalModLogs"` for custom log storage. Use the same log directory when exporting later. Logging failures produce a warning and do not interrupt installation.
+
 - No mods found: finish the Steam downloads; each supported mod needs a `res.pak` or `res1.pak`.
 - Tool fails to start: extract all files, check .NET Framework 4.8 and folder permissions, and run the command above to read the error.
 - Game detected as running: close `deadcells.exe` / `deadcells_gl.exe` first.
@@ -54,10 +64,13 @@ Override discovery for custom locations (replace these example paths):
 ```powershell
 .\Test-InstallLocalMods.ps1
 .\Test-Functional.ps1
+.\Test-Diagnostics.ps1
 .\package.ps1
 ```
 
-Tests use synthetic archives and fake Steam directories under `build/` only. They exercise real packing roundtrips, order validation, backup, install, removal and handled failure recovery without discovering or modifying real game installations. CI tests Windows PowerShell 5.1 and PowerShell 7 on Windows Server 2022/2025. Not every Windows 10/11 PC, game version or mod combination has been tested.
+Tests use synthetic archives and fake Steam directories under `build/` only: 24 functional checks and 32 diagnostic/regression checks, covering packing roundtrips, validation, backup, removal, rollback, log redaction/rotation and real script entry points. They do not discover or modify real game installations. CI tests Windows PowerShell 5.1 and PowerShell 7 on Windows Server 2022/2025. Not every Windows 10/11 PC, game version or mod combination has been tested.
+
+An empty `.deadcells-localmods.lock` file stays in the game directory to coordinate different tool copies. Its handle is released on exit; the file does not need deletion. Temporary cleanup failures are warnings and their paths are logged.
 
 ## License
 

@@ -4,6 +4,7 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $required = @(
     'InstallLocalMods.cmd',
     'InstallLocalMods.ps1',
+    'Diagnostics.ps1',
     'ResTool\PAKTool.exe',
     'ResTool\Common.dll',
     'ResTool\Newtonsoft.Json.dll'
@@ -30,6 +31,10 @@ $errors = $null
 ) | Out-Null
 if ($errors.Count -gt 0) {
     throw "InstallLocalMods.ps1 语法检查失败: $($errors[0].Message)"
+}
+foreach ($name in @('Diagnostics.ps1','Test-Diagnostics.ps1')) {
+    [Management.Automation.Language.Parser]::ParseFile((Join-Path $root $name),[ref]$tokens,[ref]$errors) | Out-Null
+    if ($errors.Count -gt 0) { throw "Syntax error in $name" }
 }
 
 $help = & (Join-Path $root 'ResTool\PAKTool.exe') --help 2>&1 | Out-String

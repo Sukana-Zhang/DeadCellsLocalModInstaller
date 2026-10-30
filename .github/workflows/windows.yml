@@ -26,11 +26,13 @@ jobs:
         run: |
           .\Test-InstallLocalMods.ps1
           .\Test-Functional.ps1
+          .\Test-Diagnostics.ps1
       - name: PowerShell 7 tests
         shell: pwsh
         run: |
           .\Test-InstallLocalMods.ps1
           .\Test-Functional.ps1
+          .\Test-Diagnostics.ps1
       - name: Package from allowlist
         shell: powershell
         run: |
@@ -58,6 +60,7 @@ jobs:
         run: |
           .\Test-InstallLocalMods.ps1
           .\Test-Functional.ps1
+          .\Test-Diagnostics.ps1
           .\package.ps1
       - name: Publish portable ZIP
         shell: powershell

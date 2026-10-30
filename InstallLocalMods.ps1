@@ -1,12 +1,16 @@
 ﻿param(
-    [ValidateSet("", "Install", "Remove")]
+    [ValidateSet("", "Install", "Remove", "ExportLogs")]
     [string]$Action = "",
 
     [string]$Order = "",
 
     [string]$GameDirectory = "",
 
-    [string]$SteamDirectory = ""
+    [string]$SteamDirectory = "",
+
+    [string]$DiagnosticPath = "",
+
+    [string]$LogDirectory = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,6 +21,56 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $pakTool = Join-Path $scriptRoot "ResTool\PAKTool.exe"
 $workRoot = Join-Path $env:TEMP "DeadCellsLocalModInstaller"
 $backupRoot = Join-Path $scriptRoot "Backups"
+. (Join-Path $scriptRoot 'Diagnostics.ps1')
+if ($LogDirectory) { $script:LogRoot = [IO.Path]::GetFullPath($LogDirectory) }
+
+function ConvertTo-NativeArgument([string]$argument) {
+    $escaped = [regex]::Replace($argument,'(\\*)"','$1$1\"')
+    $escaped = [regex]::Replace($escaped,'(\\+)$','$1$1')
+    return '"' + $escaped + '"'
+}
+
+function Invoke-PakTool([string[]]$arguments) {
+    $info = New-Object Diagnostics.ProcessStartInfo
+    $info.FileName = $pakTool
+    $info.Arguments = ($arguments | ForEach-Object { ConvertTo-NativeArgument $_ }) -join ' '
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $info
+    try {
+        $null = $process.Start()
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        $process.WaitForExit()
+        foreach ($output in @($stdout.Result,$stderr.Result)) {
+            if ($output) { Write-Host $output.TrimEnd(); Write-InstallerLog TOOL $output }
+        }
+        Write-InstallerLog INFO "PAKTool exit=$($process.ExitCode)"
+        if ($process.ExitCode -ne 0) { throw "PAKTool 失败，退出码 $($process.ExitCode)。请导出诊断日志。" }
+    } finally { $process.Dispose() }
+}
+
+function Open-GameLock([string]$gameDir) {
+    return [IO.File]::Open((Join-Path $gameDir '.deadcells-localmods.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+}
+
+function Get-LocalModFiles([string]$gameDir) {
+    $files = @(Get-ChildItem -LiteralPath $gameDir -File -Force | Where-Object { $_.Name -match '^res[1-9][0-9]*\.pak$' } | Sort-Object Name)
+    foreach ($file in $files) { if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "不处理链接形式的 Mod 文件: $($file.Name)" } }
+    return $files
+}
+
+function Remove-RunWorkspace([string]$runRoot) {
+    try {
+        $resolvedRun = [IO.Path]::GetFullPath($runRoot)
+        $resolvedParent = [IO.Path]::GetFullPath($workRoot).TrimEnd('\') + '\'
+        if (-not $resolvedRun.StartsWith($resolvedParent,[StringComparison]::OrdinalIgnoreCase)) { throw '临时目录超出预期范围。' }
+        if (Test-Path -LiteralPath $resolvedRun) { Remove-Item -LiteralPath $resolvedRun -Recurse -Force }
+    } catch { Write-InstallerLog WARN ('temporary cleanup failed: ' + $_.Exception.Message); Write-Warning '临时文件清理失败；不影响已完成的安装。详情见日志。' }
+}
 
 function Write-Title($text) {
     Write-Host ""
@@ -46,7 +100,7 @@ function Get-DeadCellsPakStamp($gameDir) {
     $headerText = [System.Text.Encoding]::ASCII.GetString($buffer, 12, 64)
     $match = [regex]::Match($headerText, '^[0-9a-fA-F]{64}$')
     if (-not $match.Success) {
-        throw "无法从游戏本体 res.pak 头部提取 64 位密钥，当前游戏版本可能改变了 PAK 格式。"
+        throw "无法从游戏本体 res.pak 头部提取 64 字符 stamp，当前游戏版本可能改变了 PAK 格式。"
     }
 
     return $match.Value.ToLowerInvariant()
@@ -63,6 +117,10 @@ function Parse-VdfQuotedPairs($path) {
 }
 
 function Get-SteamRootCandidates {
+    if ($SteamDirectory) {
+        Require-Path (Join-Path $SteamDirectory 'steamapps') '指定的 Steam 库 steamapps 目录'
+        return [IO.Path]::GetFullPath($SteamDirectory)
+    }
     $paths = New-Object System.Collections.Generic.List[string]
     $regPaths = @(
         "HKCU:\Software\Valve\Steam",
@@ -105,8 +163,9 @@ function Get-SteamLibraries {
         $libraryVdf = Join-Path $steamRoot "steamapps\libraryfolders.vdf"
         if (Test-Path -LiteralPath $libraryVdf) {
             foreach ($line in Get-Content -LiteralPath $libraryVdf -Encoding UTF8) {
-                if ($line -match '^\s*"path"\s*"([^"]+)"\s*$') {
-                    $libraries.Add(($matches[1] -replace '\\\\', '\'))
+                if ($line -match '^\s*"(?:path|[0-9]+)"\s*"([^"]+)"\s*$') {
+                    $candidate = $matches[1] -replace '\\\\', '\'
+                    if ([IO.Path]::IsPathRooted($candidate)) { $libraries.Add($candidate) }
                 }
             }
         }
@@ -182,7 +241,7 @@ function Find-WorkshopMods($libraries) {
             $pak = @(
                 (Join-Path $dir.FullName "res.pak"),
                 (Join-Path $dir.FullName "res1.pak")
-            ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+            ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
 
             if ($pak) {
                 $pakItem = Get-Item -LiteralPath $pak
@@ -198,7 +257,7 @@ function Find-WorkshopMods($libraries) {
             }
         }
     }
-    return $mods | Sort-Object LastWriteTime -Descending
+    return $mods | Sort-Object @{Expression='LastWriteTime';Descending=$true},Id,Directory
 }
 
 function Select-GameInstall($installs) {
@@ -275,9 +334,7 @@ function Select-ModOrder($mods, $presetOrder) {
 }
 
 function Backup-ExistingLocalMods($gameDir) {
-    $existing = @(Get-ChildItem -LiteralPath $gameDir -File |
-        Where-Object { $_.Name -match '^res[1-9][0-9]*\.pak$' } |
-        Sort-Object Name)
+    $existing = @(Get-LocalModFiles $gameDir)
 
     if ($existing.Count -eq 0) {
         return
@@ -288,22 +345,25 @@ function Backup-ExistingLocalMods($gameDir) {
     New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
 
     Write-Title "备份旧的本地 Mod"
+    Set-InstallerStage backup
     foreach ($file in $existing) {
         Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $backupDir $file.Name)
         if ((Get-FileHash -LiteralPath $file.FullName).Hash -ne (Get-FileHash -LiteralPath (Join-Path $backupDir $file.Name)).Hash) {
             throw "备份校验失败: $($file.Name)"
         }
         Write-Host "已备份 $($file.Name) -> $backupDir"
+        Write-InstallerLog INFO "backup verified file=$($file.Name) destination=$backupDir"
     }
     return $backupDir
 }
 
 function Set-LocalModFiles($gameDir, $packedFiles) {
-    $existing = @(Get-ChildItem -LiteralPath $gameDir -File | Where-Object { $_.Name -match '^res[1-9][0-9]*\.pak$' })
+    $existing = @(Get-LocalModFiles $gameDir)
     $backupDir = Backup-ExistingLocalMods $gameDir
     $attempted = @()
+    Set-InstallerStage publish
     try {
-        foreach ($file in $existing) { Remove-Item -LiteralPath $file.FullName }
+        foreach ($file in $existing) { Remove-Item -LiteralPath $file.FullName -Force }
         foreach ($packed in $packedFiles) {
             $name = [IO.Path]::GetFileName($packed)
             if ($name -notmatch '^res[1-9][0-9]*\.pak$') { throw "无效的本地 Mod 文件名: $name" }
@@ -312,15 +372,19 @@ function Set-LocalModFiles($gameDir, $packedFiles) {
             $attempted += $target
             Copy-Item -LiteralPath $packed -Destination $target
             if ((Get-FileHash -LiteralPath $packed).Hash -ne (Get-FileHash -LiteralPath $target).Hash) { throw "安装校验失败: $name" }
+            Write-InstallerLog INFO "installed file=$name"
         }
     }
     catch {
         $failure = $_
+        Write-InstallerException $failure
+        Set-InstallerStage rollback
         try {
             foreach ($target in $attempted) {
                 if (Test-Path -LiteralPath $target -PathType Leaf) { Remove-Item -LiteralPath $target -Force }
             }
             foreach ($file in $existing) { Copy-Item -LiteralPath (Join-Path $backupDir $file.Name) -Destination $file.FullName -Force }
+            Write-InstallerLog INFO 'previous files restored'
         }
         catch { throw "安装/卸载失败，自动恢复也失败。请从备份目录手动恢复: $backupDir。$($_.Exception.Message)" }
         throw $failure
@@ -345,20 +409,17 @@ function Install-SelectedMods($selectedMods, $gameDir, $stamp) {
         Write-Title "正在安装 #${slot}: $($mod.Name)"
         Write-Host "源文件: $($mod.Pak)"
 
-        & $pakTool Expand $unpackedDir $mod.Pak
-        if ($LASTEXITCODE -ne 0) {
-            throw "PAKTool 解包失败: $($mod.Pak)"
-        }
+        Set-InstallerStage expand
+        Write-InstallerLog INFO "slot=$slot source=$($mod.Pak)"
+        Invoke-PakTool @('Expand',$unpackedDir,$mod.Pak)
 
         $fileStats = Get-ChildItem -LiteralPath $unpackedDir -Recurse -File | Measure-Object -Property Length -Sum
         if ($fileStats.Count -le 0) {
             throw "解包后没有文件: $($mod.Pak)"
         }
 
-        & $pakTool Collapsev1 $unpackedDir $packedPak -s $stamp
-        if ($LASTEXITCODE -ne 0) {
-            throw "PAKTool 重新打包失败: $($mod.Pak)"
-        }
+        Set-InstallerStage repack
+        Invoke-PakTool @('Collapsev1',$unpackedDir,$packedPak,'-s',$stamp)
 
         Require-Path $packedPak "重新打包后的文件"
         if ((Get-Item -LiteralPath $packedPak).Length -le 0) { throw "重新打包后的文件为空。" }
@@ -367,17 +428,12 @@ function Install-SelectedMods($selectedMods, $gameDir, $stamp) {
     Set-LocalModFiles $gameDir $packedFiles
     }
     finally {
-        $resolvedRun = [IO.Path]::GetFullPath($runRoot)
-        $resolvedParent = [IO.Path]::GetFullPath($workRoot).TrimEnd('\') + '\'
-        if (-not $resolvedRun.StartsWith($resolvedParent, [StringComparison]::OrdinalIgnoreCase)) { throw '临时目录超出预期范围。' }
-        if (Test-Path -LiteralPath $resolvedRun) { Remove-Item -LiteralPath $resolvedRun -Recurse -Force }
+        Remove-RunWorkspace $runRoot
     }
 }
 
 function Remove-LocalMods($gameDir) {
-    $existing = @(Get-ChildItem -LiteralPath $gameDir -File |
-        Where-Object { $_.Name -match '^res[1-9][0-9]*\.pak$' } |
-        Sort-Object Name)
+    $existing = @(Get-LocalModFiles $gameDir)
 
     if ($existing.Count -eq 0) {
         Write-Host "没有找到本地 Mod 文件。"
@@ -391,36 +447,17 @@ function Remove-LocalMods($gameDir) {
 if ($MyInvocation.InvocationName -eq '.') { return }
 
 $runLock = $null
+$gameLock = $null
+$script:LogEnabled = $true
 try {
-    $runLock = [IO.File]::Open((Join-Path $scriptRoot '.installer.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
-    if (@(Get-Process -Name deadcells,deadcells_gl -ErrorAction SilentlyContinue).Count -gt 0) { throw '请先关闭死亡细胞，再安装或卸载 Mod。' }
-    Require-Path $pakTool "PAKTool"
-
+    Write-InstallerLog INFO (Get-DiagnosticHeader)
     Write-Host "死亡细胞本地 Mod 安装工具" -ForegroundColor Green
     Write-Host "用途：把创意工坊 Mod 重新打包成本地 res1.pak/res2.pak 文件。"
-
-    $libraries = @(Get-SteamLibraries)
-    if ($libraries.Count -eq 0 -and -not $GameDirectory) {
-        throw "没有找到 Steam 库。请先启动一次 Steam，然后重新运行本工具。"
-    }
-
-    $installs = @(Find-DeadCellsInstall $libraries)
-    if ($GameDirectory) {
-        $installs = @([pscustomobject]@{ GameDir = [IO.Path]::GetFullPath($GameDirectory) })
-        Require-Path (Join-Path $installs[0].GameDir 'res.pak') '游戏本体 res.pak'
-    }
-    if ($installs.Count -eq 0) {
-        throw "没有在已检测到的 Steam 库中找到死亡细胞安装目录。"
-    }
-
-    $game = Select-GameInstall $installs
-    $gameDir = $game.GameDir
-    Write-Title "死亡细胞安装目录"
-    Write-Host $gameDir
-
     Write-Host ""
     Write-Host "[1] 安装创意工坊 Mod 为本地 Mod"
     Write-Host "[2] 卸载本地 Mod（备份并移除 res1.pak/res2.pak/...）"
+    Write-Host "[3] 导出诊断日志"
+    Set-InstallerStage select-action
     if ($Action -eq "Install") {
         $mode = "1"
         Write-Host "选择功能: 1"
@@ -429,42 +466,77 @@ try {
         $mode = "2"
         Write-Host "选择功能: 2"
     }
+    elseif ($Action -eq 'ExportLogs') { $mode = '3' }
     else {
         $mode = Read-Host "选择功能"
     }
 
-    if ($mode -eq "2") {
+    if ($mode -eq '3') { $null = Export-InstallerLogs $DiagnosticPath; exit 0 }
+    if ($mode -notin @('','1','2')) { throw "未知功能: $mode" }
+
+    Set-InstallerStage lock-installer
+    $runLock = [IO.File]::Open((Join-Path $scriptRoot '.installer.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+    if (@(Get-Process -Name deadcells,deadcells_gl -ErrorAction SilentlyContinue).Count -gt 0) { throw '请先关闭死亡细胞，再安装或卸载 Mod。' }
+    Set-InstallerStage discover
+    $libraries = @()
+    if ($GameDirectory) {
+        $gameDir = [IO.Path]::GetFullPath($GameDirectory)
+        Require-Path (Join-Path $gameDir 'res.pak') '游戏本体 res.pak'
+    }
+    else {
+        $libraries = @(Get-SteamLibraries)
+        $installs = @(Find-DeadCellsInstall $libraries)
+        if ($installs.Count -eq 0) { throw '没有在已检测到的 Steam 库中找到死亡细胞安装目录。' }
+        $gameDir = (Select-GameInstall $installs).GameDir
+    }
+    Write-Host "游戏目录: $gameDir"
+    Write-InstallerLog INFO "game=$gameDir"
+    Set-InstallerStage lock-game
+    $gameLock = Open-GameLock $gameDir
+    if ($mode -eq '2') {
+        Set-InstallerStage remove
         Remove-LocalMods $gameDir
+        Set-InstallerStage complete
+        Write-InstallerLog INFO 'remove success'
         Write-Host ""
         Write-Host "完成。" -ForegroundColor Green
         exit 0
     }
-    elseif ($mode -ne "1" -and $mode -ne "") {
-        throw "未知功能: $mode"
+    Set-InstallerStage verify-dependencies
+    Require-Path $pakTool 'PAKTool'
+    foreach ($line in Get-Content -LiteralPath (Join-Path $scriptRoot 'dependencies.sha256')) {
+        if ($line -notmatch '^([a-f0-9]{64})  (ResTool/[A-Za-z.]+)$') { throw '依赖清单格式错误。' }
+        if ((Get-FileHash -LiteralPath (Join-Path $scriptRoot $matches[2]) -Algorithm SHA256).Hash -ne $matches[1]) { throw "依赖校验失败: $($matches[2])" }
     }
-
+    Set-InstallerStage discover-mods
+    if ($libraries.Count -eq 0) { $libraries = @(Get-SteamLibraries) }
     $mods = @(Find-WorkshopMods $libraries)
     if ($mods.Count -eq 0) {
         throw "没有在 steamapps\workshop\content\$appId 下找到创意工坊 Mod PAK 文件。"
     }
 
     $selectedMods = @(Select-ModOrder $mods $Order)
-
+    Write-InstallerLog INFO "selected=$($selectedMods.Count) order=$Order"
+    Set-InstallerStage read-stamp
     $stamp = Get-DeadCellsPakStamp $gameDir
     Write-Host '已读取当前游戏 PAK stamp。'
     Install-SelectedMods $selectedMods $gameDir $stamp
-
+    Set-InstallerStage complete
+    Write-InstallerLog INFO "install success count=$($selectedMods.Count)"
     Write-Host ""
     Write-Host "完成。" -ForegroundColor Green
     Write-Host "已安装 $($selectedMods.Count) 个本地 Mod。请从 Steam 正常启动死亡细胞。"
     Write-Host "不要在游戏内 Workshop / Mod 菜单里启用同一个 Mod。"
 }
 catch {
+    Write-InstallerException $_
     Write-Host ""
     Write-Host "失败: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host '可重新运行并选择 3 导出诊断日志。'
     exit 1
 }
 finally {
+    if ($null -ne $gameLock) { $gameLock.Dispose() }
     if ($null -ne $runLock) { $runLock.Dispose() }
 }
 
